@@ -15,11 +15,44 @@ struct __attribute__((packed)) EepromData {
 static constexpr uint8_t ADS_REG_CONVERT = 0x00;
 static constexpr uint8_t ADS_REG_CONFIG  = 0x01;
 
-// Config register base: OS=1(start), PGA=000(±6.144V), MODE=1(single-shot),
-// DR=100(1600SPS), COMP_QUE=11(disabled)
-// MUX bits 14-12 added per channel: (4+ch) << 12
+// Config base: OS=1(start), PGA=000(±6.144V), MODE=1(single-shot),
+// DR=100(1600SPS), COMP_QUE=11(disabled). MUX added per channel: (4+ch)<<12
 static constexpr uint16_t ADS_CONFIG_BASE = 0x8183;
-//  0x8000 OS  | 0x0000 PGA±6.144V | 0x0100 single-shot | 0x0080 1600SPS | 0x0003 comp-off
+
+// ── Buzzer pattern data (PROGMEM) ─────────────────────────────────────────────
+// Each row: {onMs, offMs}. offMs=0 on last step marks end of pattern.
+struct BeepStep { uint16_t onMs; uint16_t offMs; };
+
+static const BeepStep PATTERN_INFO[]    PROGMEM = {
+    {200, 800},             // 1 beep, 800ms silence
+    {0, 0}
+};
+static const BeepStep PATTERN_WARNING[] PROGMEM = {
+    {200, 150},             // beep 1, short gap
+    {200, 2000},            // beep 2, long silence
+    {0, 0}
+};
+static const BeepStep PATTERN_ALARM[]   PROGMEM = {
+    {150, 100},             // beep 1
+    {150, 100},             // beep 2
+    {150, 1500},            // beep 3, long silence
+    {0, 0}
+};
+
+static const BeepStep* _patternPtr(uint8_t idx) {
+    switch (idx) {
+        case BUZZER_INFO:    return PATTERN_INFO;
+        case BUZZER_WARNING: return PATTERN_WARNING;
+        case BUZZER_ALARM:   return PATTERN_ALARM;
+        default:             return nullptr;
+    }
+}
+
+static BeepStep _readStep(const BeepStep* pattern, uint8_t step) {
+    BeepStep s;
+    memcpy_P(&s, &pattern[step], sizeof(s));
+    return s;
+}
 
 // ── Constructors ──────────────────────────────────────────────────────────────
 
@@ -33,13 +66,14 @@ ApaSense::ApaSense(uint8_t adsAddr, uint8_t pcfAddr)
     : _adsAddr(adsAddr), _pcfAddr(pcfAddr) { _init(); }
 
 void ApaSense::_init() {
-    _chBits             = 0xE4; // LDR=3, AUX=2, current=1, pressure=0 defaults
+    _chBits             = 0xE4;
     _pressureZero       = 0;
     _currentZero        = 0;
     _ldrMin             = 0;
     _ldrMax             = 1667;
     _pressureMaxBar     = APASENSE_DEFAULT_MAX_BAR;
     _currentSensitivity = APASENSE_DEFAULT_CURR_SENS;
+    _mainsVoltage       = 0.0f;
     _rawPressure        = 0;
     _rawAux             = 0;
     _rawLdr             = 0;
@@ -49,7 +83,9 @@ void ApaSense::_init() {
     _pcfBState          = 0xFF;
     _tankBits           = 0x00;
     _buzzerPin          = APASENSE_NO_BUZZER;
-    _beepEndMs          = 0;
+    _buzzerPattern      = 0xFF;
+    _buzzerStep         = 0xFF;
+    _buzzerStepEndMs    = 0;
     _settleStartMs      = 0;
     _adsPendingCh       = 0xFF;
     _adsCh              = 0;
@@ -68,11 +104,10 @@ void ApaSense::begin() {
 
     _loadEEPROM();
 
-    // Init PCF: 0xFF arms P0-P3 as inputs (pull-up) and keeps P4-P7 LEDs off
     if (_pcfAddr != APASENSE_NO_PCF) {
         _pcfBState = 0xFF;
-        _writePCF();
         _flags.pcfReady = true;
+        _writePCF();
     }
 
     _flags.adsReady = true;
@@ -92,27 +127,32 @@ void ApaSense::begin() {
 void ApaSense::update() {
     uint32_t now = millis();
 
-    // Beep timer
-    if (_beepEndMs && now >= _beepEndMs) {
-        _beepEndMs = 0;
-        if (_flags.buzzerEnabled) digitalWrite(_buzzerPin, LOW);
+    // ── Buzzer sequencer ──────────────────────────────────────────────────────
+    if (_flags.buzzerEnabled) {
+        if (_buzzerStep != 0xFF) {
+            // Active pattern — check if current step time elapsed (rollover-safe)
+            if ((int32_t)(now - _buzzerStepEndMs) >= 0) _advanceBuzzerPattern(now);
+        } else if (_buzzerStepEndMs && (int32_t)(now - _buzzerStepEndMs) >= 0) {
+            // Simple beep — turn off when timer expires
+            _buzzerStepEndMs = 0;
+            digitalWrite(_buzzerPin, LOW);
+        }
     }
 
-    // Pressure settle → auto re-zero
+    // ── Pressure settle → auto re-zero ───────────────────────────────────────
     if (_flags.settlePending && now - _settleStartMs >= APASENSE_PRESSURE_SETTLE_MS) {
         calibratePressureZero();
     }
 
     if (!_flags.adsReady) return;
 
-    // Read completed conversion
+    // ── ADC conversion cycle ──────────────────────────────────────────────────
     if (_adsPendingCh != 0xFF && (uint16_t)now - _adsConvMs16 >= 1) {
         int16_t raw = _readConversion();
         _processADC(_adsPendingCh, raw);
         _adsPendingCh = 0xFF;
     }
 
-    // Start next conversion (round-robin through enabled sensors)
     if (_adsPendingCh == 0xFF) {
         for (uint8_t i = 0; i < 4; i++) {
             uint8_t sensor = (_adsCh + i) & 0x03;
@@ -143,9 +183,10 @@ void ApaSense::enablePressure(uint8_t channel, float maxBar) {
     _flags.pressureEnabled = true;
 }
 
-void ApaSense::enableCurrent(uint8_t channel, float sensitivity) {
+void ApaSense::enableCurrent(uint8_t channel, float sensitivity, float voltageV) {
     _chBits = (_chBits & ~0x0C) | ((channel & 0x03) << 2);
     _currentSensitivity = (sensitivity > 0.0f) ? sensitivity : APASENSE_DEFAULT_CURR_SENS;
+    _mainsVoltage = (voltageV > 0.0f) ? voltageV : 0.0f;
     _flags.currentEnabled = true;
 }
 
@@ -165,7 +206,6 @@ void ApaSense::enableLDR(uint8_t channel, int16_t rawDark, int16_t rawSun) {
 
 float ApaSense::getPressure() const {
     if (!_flags.pressureEnabled || !_flags.pressureCalibrated) return -1.0f;
-    // 4 V span (0.5–4.5 V ratiometric) = 4000 mV / 3 mV/LSB = 1333.33 counts full scale
     float bar = (float)(_rawPressure - _pressureZero) * _pressureMaxBar / 1333.33f;
     return (bar < 0.0f) ? 0.0f : bar;
 }
@@ -173,6 +213,14 @@ float ApaSense::getPressure() const {
 float ApaSense::getCurrent() const {
     if (!_flags.currentEnabled || !_flags.currentCalibrated) return -1.0f;
     return _currentRms;
+}
+
+float ApaSense::getPower() const {
+    // Returns apparent power (VA = V × I_rms), not true power.
+    // True watts ≈ getPower() × power factor (≈0.85-0.95 for induction motors).
+    if (!_flags.currentEnabled || !_flags.currentCalibrated) return -1.0f;
+    if (_mainsVoltage <= 0.0f) return -1.0f;
+    return _mainsVoltage * _currentRms;
 }
 
 float ApaSense::getAuxVoltage() const {
@@ -223,14 +271,14 @@ void ApaSense::enableTankSensor(uint8_t bit, bool activeLow) {
 
 bool ApaSense::isTankEmpty(uint8_t bit) {
     if (bit > 3)                                     return false;
-    if (!(_tankBits & (1 << bit)))                   return false; // not enabled
+    if (!(_tankBits & (1 << bit)))                   return false;
     if (_pcfAddr == APASENSE_NO_PCF || !_flags.pcfReady) return false;
 
     Wire.requestFrom(_pcfAddr, (uint8_t)1);
     if (!Wire.available()) return false;
     uint8_t state = Wire.read();
 
-    bool physLow  = !(state & (1 << bit));
+    bool physLow   = !(state & (1 << bit));
     bool activeLow = (_tankBits & (uint8_t)(1 << (bit + 4))) != 0;
     return activeLow ? physLow : !physLow;
 }
@@ -239,16 +287,16 @@ bool ApaSense::isTankEmpty(uint8_t bit) {
 
 void ApaSense::setLed(uint8_t index, bool on) {
     if (index > 3 || !_flags.pcfReady) return;
-    uint8_t pcfBit = index + 4; // index 0-3 → PCF P4-P7
+    uint8_t pcfBit = index + 4;
     uint8_t prev = _pcfBState;
-    if (on) _pcfBState &= ~(uint8_t)(1 << pcfBit); // LOW = LED on
-    else    _pcfBState |=  (uint8_t)(1 << pcfBit); // HIGH = LED off
-    if (_pcfBState != prev) _writePCF();            // only write on state change
+    if (on) _pcfBState &= ~(uint8_t)(1 << pcfBit);
+    else    _pcfBState |=  (uint8_t)(1 << pcfBit);
+    if (_pcfBState != prev) _writePCF();
 }
 
 bool ApaSense::getLed(uint8_t index) const {
     if (index > 3) return false;
-    return !(_pcfBState & (1 << (index + 4))); // LOW = on → invert
+    return !(_pcfBState & (1 << (index + 4)));
 }
 
 // ── Buzzer ────────────────────────────────────────────────────────────────────
@@ -263,14 +311,76 @@ void ApaSense::enableBuzzer(uint8_t pin) {
 
 void ApaSense::setBuzzer(bool on) {
     if (!_flags.buzzerEnabled) return;
-    _beepEndMs = 0;
+    _buzzerPattern   = 0xFF;
+    _buzzerStep      = 0xFF;
+    _buzzerStepEndMs = 0;
     digitalWrite(_buzzerPin, on ? HIGH : LOW);
 }
 
 void ApaSense::beep(uint16_t ms) {
     if (!_flags.buzzerEnabled || ms == 0) return;
-    _beepEndMs = millis() + ms;
+    _buzzerPattern   = 0xFF;   // cancel any active pattern
+    _buzzerStep      = 0xFF;
+    _buzzerStepEndMs = millis() + ms;
     digitalWrite(_buzzerPin, HIGH);
+}
+
+void ApaSense::alert(BuzzerAlert severity, bool repeat) {
+    if (!_flags.buzzerEnabled) return;
+    const BeepStep* pat = _patternPtr((uint8_t)severity);
+    if (!pat) return;
+    BeepStep first = _readStep(pat, 0);
+    if (first.onMs == 0) return;  // empty pattern guard
+
+    _buzzerPattern        = (uint8_t)severity;
+    _buzzerStep           = 0;
+    _flags.buzzerRepeat   = repeat;
+    _flags.buzzerOnPhase  = true;
+    _buzzerStepEndMs      = millis() + first.onMs;
+    digitalWrite(_buzzerPin, HIGH);
+}
+
+void ApaSense::stopAlert() {
+    _buzzerPattern   = 0xFF;
+    _buzzerStep      = 0xFF;
+    _buzzerStepEndMs = 0;
+    if (_flags.buzzerEnabled) digitalWrite(_buzzerPin, LOW);
+}
+
+// ── Private: buzzer pattern sequencer ────────────────────────────────────────
+
+void ApaSense::_advanceBuzzerPattern(uint32_t now) {
+    const BeepStep* pat = _patternPtr(_buzzerPattern);
+    if (!pat) { stopAlert(); return; }
+
+    if (_flags.buzzerOnPhase) {
+        // ON phase complete → start OFF phase for this step
+        digitalWrite(_buzzerPin, LOW);
+        _flags.buzzerOnPhase = false;
+        BeepStep s = _readStep(pat, _buzzerStep);
+        _buzzerStepEndMs = now + s.offMs;
+    } else {
+        // OFF phase complete → advance to next step
+        _buzzerStep++;
+        BeepStep s = _readStep(pat, _buzzerStep);
+        if (s.onMs == 0) {
+            // End of pattern
+            if (_flags.buzzerRepeat) {
+                _buzzerStep = 0;
+                s = _readStep(pat, 0);
+                _flags.buzzerOnPhase = true;
+                _buzzerStepEndMs = now + s.onMs;
+                digitalWrite(_buzzerPin, HIGH);
+            } else {
+                stopAlert();
+            }
+        } else {
+            // Start next step's ON phase
+            _flags.buzzerOnPhase = true;
+            _buzzerStepEndMs = now + s.onMs;
+            digitalWrite(_buzzerPin, HIGH);
+        }
+    }
 }
 
 // ── Private: I2C helpers ──────────────────────────────────────────────────────
@@ -293,13 +403,11 @@ uint16_t ApaSense::_readRegister(uint8_t reg) {
 }
 
 void ApaSense::_startConversion(uint8_t channel) {
-    // MUX: single-ended AIN0-3 → bits 14-12 = 4,5,6,7 for channels 0-3
     uint16_t config = ADS_CONFIG_BASE | ((uint16_t)(4 + channel) << 12);
     _writeRegister(ADS_REG_CONFIG, config);
 }
 
 int16_t ApaSense::_readConversion() {
-    // Result is MSB-aligned 12-bit signed in a 16-bit register; shift right 4
     return (int16_t)_readRegister(ADS_REG_CONVERT) >> 4;
 }
 
@@ -313,7 +421,6 @@ void ApaSense::_processADC(uint8_t sensor, int16_t raw) {
             _currentSumSq += (uint32_t)((int32_t)centered * centered);
             _currentSampleN++;
             if (_currentSampleN >= APASENSE_RMS_SAMPLES) {
-                // I_rms = sqrt(sumSq/N) × (Vref/2048) / sensitivity
                 _currentRms = sqrtf((float)_currentSumSq / (float)APASENSE_RMS_SAMPLES)
                               * (6.144f / 2048.0f) / _currentSensitivity;
                 _currentSumSq   = 0;
