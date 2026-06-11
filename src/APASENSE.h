@@ -2,7 +2,7 @@
 #include <Arduino.h>
 
 // ── Version ──────────────────────────────────────────────────────────────────
-#define APASENSE_LIB_VERSION "1.1.0"
+#define APASENSE_LIB_VERSION "1.1.1"
 
 // ── EEPROM ───────────────────────────────────────────────────────────────────
 // APA EEPROM map: 520–531 APAPUMP | 532–581 APAPUMP reserve | 582–587 APASENSE
