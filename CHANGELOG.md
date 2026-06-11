@@ -1,5 +1,10 @@
 # Changelog — APASENSE
 
+## [1.1.1] — 2026-06-11
+
+### Added
+- Library logo (`extras/apasense-logo.png`) — now displayed in README header.
+
 ## [1.1.0] — 2026-06-10
 
 ### Added
